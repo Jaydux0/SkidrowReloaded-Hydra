@@ -2,59 +2,62 @@ import json
 import cloudscraper
 from bs4 import BeautifulSoup
 from datetime import datetime
-import re
-import os
 
 FICHIER_JSON = "source.json"
 
 def main():
-    # SkidrowReloaded utilise souvent Cloudflare. 
-    # Cloudscraper permet de contourner les protections basiques.
-    scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False})
+    # Configuration du scraper pour simuler un vrai navigateur
+    scraper = cloudscraper.create_scraper(
+        browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False}
+    )
     
-    # 1. Charger l'historique JSON existant
     try:
         with open(FICHIER_JSON, "r", encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
         data = {"name": "Skidrow - Source Auto", "downloads": []}
 
-    # 2. Récupérer le flux RSS (plus structuré et stable que la page d'accueil)
     url = "https://www.skidrowreloaded.com/feed/"
     try:
         response = scraper.get(url, timeout=15)
         soup = BeautifulSoup(response.content, "xml")
     except Exception as e:
-        print(f"Erreur de connexion au site: {e}")
+        print(f"Erreur de connexion au flux RSS: {e}")
         return
 
     nouveaux_ajouts = 0
 
-    # 3. Analyser les derniers articles sortis
     for item in soup.find_all("item"):
         title = item.title.text.strip()
         link = item.link.text.strip()
         
-        # Ignorer si le jeu est déjà présent dans le JSON
         if any(d.get('title') == title for d in data["downloads"]):
             continue
             
-        print(f"Recherche de liens pour : {title}")
+        print(f"Analyse de la page : {title}")
         
-        # 4. Visiter la page de l'article pour extraire les liens Magnet / Torrents
         try:
             page_resp = scraper.get(link, timeout=10)
-            page_soup = BeautifulSoup(page_resp.text, "html.parser")
             
+            # Vérification si Cloudflare bloque l'accès
+            if page_resp.status_code != 200:
+                print(f" -> Erreur {page_resp.status_code}. Accès bloqué par le site.")
+                continue
+                
+            page_soup = BeautifulSoup(page_resp.text, "html.parser")
             magnets = []
             
-            # Recherche de tous les liens commençant par magnet:
+            # Recherche de tous les liens de la page
             for a in page_soup.find_all('a', href=True):
                 href = a['href']
-                if href.startswith('magnet:?xt='):
-                    magnets.append(href)
+                texte = a.text.strip().upper()
+                
+                # On cible les liens commençant par magnet: OU contenant le texte MAGNET
+                if href.startswith('magnet:') or 'MAGNET' in texte:
+                    if href.startswith('magnet:'):
+                        magnets.append(href)
             
-            # Nettoyage des doublons éventuels sur la page
+            # Suppression des doublons
             magnets = list(set(magnets))
             
             if magnets:
@@ -62,23 +65,23 @@ def main():
                     "title": title,
                     "uris": magnets,
                     "uploadDate": datetime.utcnow().isoformat() + "Z",
-                    "fileSize": "Inconnue" # Donnée complexe à parser proprement sur ce site
+                    "fileSize": "Inconnue"
                 })
                 nouveaux_ajouts += 1
-                print(f" -> {len(magnets)} lien(s) ajouté(s).")
+                print(f" -> Succès : {len(magnets)} magnet(s) trouvé(s) !")
             else:
-                print(" -> Aucun lien magnet détecté (probablement des liens DDL uniquement).")
+                print(" -> Échec : Le bouton MAGNET n'a pas été trouvé dans le code HTML.")
                 
         except Exception as e:
-            print(f"Erreur lors de l'analyse de {link}: {e}")
+            print(f" -> Erreur technique sur cet article : {e}")
 
-    # 5. Sauvegarder si de nouveaux éléments ont été trouvés
+    # Sauvegarde
     if nouveaux_ajouts > 0:
         with open(FICHIER_JSON, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-        print(f"\nMise à jour terminée : {nouveaux_ajouts} nouveaux jeux ajoutés au source.json.")
+        print(f"\nMise à jour terminée : {nouveaux_ajouts} jeux ajoutés !")
     else:
-        print("\nAucun nouveau jeu avec torrent n'a été trouvé.")
+        print("\nAucun nouveau magnet n'a pu être extrait.")
 
 if __name__ == "__main__":
     main()

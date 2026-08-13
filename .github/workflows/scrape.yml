@@ -1,0 +1,37 @@
+name: Actualisation Hydra Launcher - Skidrow
+
+on:
+  schedule:
+    - cron: "0 */6 * * *" # Déclenchement automatique toutes les 6 heures
+  workflow_dispatch: # Bouton pour lancer l'action manuellement
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Requis pour commit le fichier sur le repo
+      
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v4
+
+      - name: Configuration de Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Installation des modules
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Lancement du script de scraping
+        run: python scraper.py
+
+      - name: Commit et Push (si modification)
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add source.json
+          git commit -m "Ajout de nouveaux torrents depuis Skidrow" || true
+          git push

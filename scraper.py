@@ -1,16 +1,12 @@
 import json
-import cloudscraper
+from curl_cffi import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 
 FICHIER_JSON = "source.json"
 
 def main():
-    # Configuration du scraper pour simuler un vrai navigateur
-    scraper = cloudscraper.create_scraper(
-        browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False}
-    )
-    
+    # 1. Charger l'historique
     try:
         with open(FICHIER_JSON, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -18,46 +14,55 @@ def main():
         data = {"name": "Skidrow - Source Auto", "downloads": []}
 
     url = "https://www.skidrowreloaded.com/feed/"
+    print("Tentative de connexion au flux RSS...")
+    
+    # 2. Récupérer le flux avec curl_cffi pour simuler Chrome
     try:
-        response = scraper.get(url, timeout=15)
+        response = requests.get(url, impersonate="chrome110", timeout=15)
+        print(f"Code de réponse RSS : {response.status_code}")
+        
+        if response.status_code != 200:
+            print("Erreur : Le site a bloqué la connexion (Protection anti-bot).")
+            return
+            
         soup = BeautifulSoup(response.content, "xml")
     except Exception as e:
-        print(f"Erreur de connexion au flux RSS: {e}")
+        print(f"Erreur critique lors de la connexion : {e}")
         return
 
+    items = soup.find_all("item")
+    print(f"{len(items)} articles trouvés dans le flux.")
+    
     nouveaux_ajouts = 0
 
-    for item in soup.find_all("item"):
+    # 3. Analyser les articles
+    for item in items:
         title = item.title.text.strip()
         link = item.link.text.strip()
         
         if any(d.get('title') == title for d in data["downloads"]):
             continue
             
-        print(f"Analyse de la page : {title}")
+        print(f"\nAnalyse de : {title}")
         
         try:
-            page_resp = scraper.get(link, timeout=10)
+            page_resp = requests.get(link, impersonate="chrome110", timeout=10)
             
-            # Vérification si Cloudflare bloque l'accès
             if page_resp.status_code != 200:
-                print(f" -> Erreur {page_resp.status_code}. Accès bloqué par le site.")
+                print(f" -> Erreur {page_resp.status_code}. Accès bloqué pour cet article.")
                 continue
                 
             page_soup = BeautifulSoup(page_resp.text, "html.parser")
             magnets = []
             
-            # Recherche de tous les liens de la page
             for a in page_soup.find_all('a', href=True):
                 href = a['href']
                 texte = a.text.strip().upper()
                 
-                # On cible les liens commençant par magnet: OU contenant le texte MAGNET
                 if href.startswith('magnet:') or 'MAGNET' in texte:
                     if href.startswith('magnet:'):
                         magnets.append(href)
             
-            # Suppression des doublons
             magnets = list(set(magnets))
             
             if magnets:
@@ -70,12 +75,12 @@ def main():
                 nouveaux_ajouts += 1
                 print(f" -> Succès : {len(magnets)} magnet(s) trouvé(s) !")
             else:
-                print(" -> Échec : Le bouton MAGNET n'a pas été trouvé dans le code HTML.")
+                print(" -> Échec : Aucun lien magnet dans le code HTML.")
                 
         except Exception as e:
-            print(f" -> Erreur technique sur cet article : {e}")
+            print(f" -> Erreur technique : {e}")
 
-    # Sauvegarde
+    # 4. Sauvegarde
     if nouveaux_ajouts > 0:
         with open(FICHIER_JSON, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
